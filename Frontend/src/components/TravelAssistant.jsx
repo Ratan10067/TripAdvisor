@@ -38,6 +38,7 @@ const TravelAssistant = () => {
   const ai = new GoogleGenAI({
     apiKey: import.meta.env.VITE_GEMINI_API_KEY,
   });
+
   const examplePrompts = [
     "Plan a 3-day budget trip to Goa from Delhi",
     "Best way to travel from Mumbai to Bangalore with fare estimates",
@@ -88,33 +89,102 @@ const TravelAssistant = () => {
     return <Clock size={16} className="text-blue-500" />;
   };
 
-  // Mock AI response function - replace with your actual Gemini API call
+  // Fixed API call function
   const callGeminiAPI = async (userPrompt) => {
-    const result = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
+    try {
+      const prompt = `You are TravelMate AI, an expert travel assistant. Provide detailed travel plans including:
+        - Multiple transportation options with fare estimates
+        - Daily itinerary with time-based activities
+        - Accommodation options at different price points
+        - Estimated total costs (budget/mid-range/luxury)
+        - Practical travel tips
+        
+        IMPORTANT: Return response as valid JSON with these exact keys:
         {
-          role: "user",
-          parts: [
+          "destination": "string",
+          "summary": "string",
+          "itinerary": [
             {
-              text: `You are TravelMate AI, an expert travel assistant. Provide detailed travel plans including:
-                - Multiple transportation options with fare estimates
-                - Daily itinerary with time-based activities
-                - Accommodation options at different price points
-                - Estimated total costs (budget/mid-range/luxury)
-                - Practical travel tips
-                
-                Format response as valid JSON with these keys:
-                destination, summary, itinerary[], transportation[], accommodation[], estimatedTotal{}, tips[]
-                
-                Current request: ${userPrompt}`,
-            },
+              "day": number,
+              "location": "string",
+              "activities": [
+                {
+                  "time": "string",
+                  "description": "string"
+                }
+              ]
+            }
           ],
-        },
-      ],
-    });
-    console.log(result.text);
-    return result.text;
+          "transportation": [
+            {
+              "mode": "string",
+              "route": "string",
+              "cost": "string",
+              "duration": "string",
+              "notes": "string"
+            }
+          ],
+          "accommodation": [
+            {
+              "city": "string",
+              "options": [
+                {
+                  "type": "string",
+                  "price": "string",
+                  "rating": number,
+                  "example": "string"
+                }
+              ]
+            }
+          ],
+          "estimatedTotal": {
+            "budget": "string",
+            "midRange": "string",
+            "luxury": "string"
+          },
+          "tips": ["string"]
+        }
+        
+        Current request: ${userPrompt}`;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+      });
+      const text = result.text;
+
+      console.log("Raw API Response:", text);
+
+      // Try to extract JSON from the response
+      let jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+      if (!jsonMatch) {
+        // If no code block, try to find JSON in the text
+        jsonMatch = text.match(/\{[\s\S]*\}/);
+      }
+
+      if (jsonMatch) {
+        const jsonText = jsonMatch[1] || jsonMatch[0];
+        return JSON.parse(jsonText);
+      } else {
+        // If no JSON found, create a structured response from the text
+        return {
+          destination: "Travel Plan",
+          summary: text.substring(0, 200) + "...",
+          itinerary: [],
+          transportation: [],
+          accommodation: [],
+          estimatedTotal: {
+            budget: "Contact for pricing",
+            midRange: "Contact for pricing",
+            luxury: "Contact for pricing",
+          },
+          tips: [text.substring(0, 100) + "..."],
+        };
+      }
+    } catch (error) {
+      console.error("Error parsing response:", error);
+      throw error;
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -126,11 +196,13 @@ const TravelAssistant = () => {
 
     try {
       const travelData = await callGeminiAPI(prompt);
+      console.log("Parsed response:", travelData);
       setResponse(travelData);
       setHistory((prev) => [
         { prompt, response: travelData },
         ...prev.slice(0, 4),
       ]);
+      setActiveTab("overview"); // Reset to overview tab
     } catch (error) {
       console.error("Error calling AI API:", error);
       setResponse({
@@ -163,40 +235,54 @@ const TravelAssistant = () => {
     let content = `=== TRAVEL PLAN FOR ${data.destination?.toUpperCase()} ===\n\n`;
     content += `${data.summary}\n\n`;
 
-    content += "--- DETAILED ITINERARY ---\n";
-    data.itinerary?.forEach((day) => {
-      content += `\nDAY ${day.day}: ${day.location}\n`;
-      content += "=" + "=".repeat(day.location.length + 10) + "\n";
-      day.activities?.forEach((activity) => {
-        content += `${activity.time}: ${activity.description}\n`;
+    if (data.itinerary && data.itinerary.length > 0) {
+      content += "--- DETAILED ITINERARY ---\n";
+      data.itinerary.forEach((day) => {
+        content += `\nDAY ${day.day}: ${day.location}\n`;
+        content += "=" + "=".repeat(day.location.length + 10) + "\n";
+        if (day.activities && day.activities.length > 0) {
+          day.activities.forEach((activity) => {
+            content += `${activity.time}: ${activity.description}\n`;
+          });
+        }
       });
-    });
+    }
 
-    content += "\n--- TRANSPORTATION OPTIONS ---\n";
-    data.transportation?.forEach((trans) => {
-      content += `\n${trans.mode}: ${trans.route}\n`;
-      content += `Cost: ${trans.cost}\n`;
-      content += `Duration: ${trans.duration}\n`;
-      if (trans.notes) content += `Notes: ${trans.notes}\n`;
-    });
-
-    content += "\n--- ACCOMMODATION OPTIONS ---\n";
-    data.accommodation?.forEach((city) => {
-      content += `\n${city.city}:\n`;
-      city.options?.forEach((option) => {
-        content += `  ${option.type}: ${option.price} (${option.rating}★) - ${option.example}\n`;
+    if (data.transportation && data.transportation.length > 0) {
+      content += "\n--- TRANSPORTATION OPTIONS ---\n";
+      data.transportation.forEach((trans) => {
+        content += `\n${trans.mode}: ${trans.route}\n`;
+        content += `Cost: ${trans.cost}\n`;
+        content += `Duration: ${trans.duration}\n`;
+        if (trans.notes) content += `Notes: ${trans.notes}\n`;
       });
-    });
+    }
 
-    content += "\n--- ESTIMATED TOTAL COSTS ---\n";
-    content += `Budget Option: ${data.estimatedTotal?.budget}\n`;
-    content += `Mid-Range Option: ${data.estimatedTotal?.midRange}\n`;
-    content += `Luxury Option: ${data.estimatedTotal?.luxury}\n`;
+    if (data.accommodation && data.accommodation.length > 0) {
+      content += "\n--- ACCOMMODATION OPTIONS ---\n";
+      data.accommodation.forEach((city) => {
+        content += `\n${city.city}:\n`;
+        if (city.options && city.options.length > 0) {
+          city.options.forEach((option) => {
+            content += `  ${option.type}: ${option.price} (${option.rating}★) - ${option.example}\n`;
+          });
+        }
+      });
+    }
 
-    content += "\n--- ESSENTIAL TRAVEL TIPS ---\n";
-    data.tips?.forEach((tip, i) => {
-      content += `${i + 1}. ${tip}\n`;
-    });
+    if (data.estimatedTotal) {
+      content += "\n--- ESTIMATED TOTAL COSTS ---\n";
+      content += `Budget Option: ${data.estimatedTotal.budget}\n`;
+      content += `Mid-Range Option: ${data.estimatedTotal.midRange}\n`;
+      content += `Luxury Option: ${data.estimatedTotal.luxury}\n`;
+    }
+
+    if (data.tips && data.tips.length > 0) {
+      content += "\n--- ESSENTIAL TRAVEL TIPS ---\n";
+      data.tips.forEach((tip, i) => {
+        content += `${i + 1}. ${tip}\n`;
+      });
+    }
 
     return content;
   };
@@ -380,9 +466,12 @@ const TravelAssistant = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <h2 className="text-2xl font-bold mb-2">
-                        {response.destination}
+                        {response.destination || "Your Travel Plan"}
                       </h2>
-                      <p className="text-blue-100">{response.summary}</p>
+                      <p className="text-blue-100">
+                        {response.summary ||
+                          "Custom travel itinerary created for you"}
+                      </p>
                     </div>
                     <button
                       onClick={handleDownload}
@@ -456,7 +545,8 @@ const TravelAssistant = () => {
                             Budget Range
                           </h3>
                           <p className="text-lg font-bold text-green-700">
-                            {response.estimatedTotal?.budget}
+                            {response.estimatedTotal?.budget ||
+                              "Contact for pricing"}
                           </p>
                         </div>
                         <div className="bg-purple-50 rounded-xl p-6 text-center">
@@ -465,58 +555,68 @@ const TravelAssistant = () => {
                             Destinations
                           </h3>
                           <p className="text-2xl font-bold text-purple-700">
-                            {new Set(
-                              response.itinerary?.map((day) => day.location)
-                            ).size || 0}
+                            {response.itinerary
+                              ? new Set(
+                                  response.itinerary.map((day) => day.location)
+                                ).size
+                              : 0}
                           </p>
                         </div>
                       </div>
 
                       {/* Top Tips */}
-                      <div className="bg-amber-50 rounded-xl p-6">
-                        <h3 className="text-lg font-semibold text-amber-900 mb-4 flex items-center">
-                          <Sparkles className="h-5 w-5 mr-2" />
-                          Essential Travel Tips
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {response.tips?.slice(0, 6).map((tip, i) => (
-                            <div key={i} className="flex items-start space-x-3">
-                              <span className="bg-amber-200 text-amber-800 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium flex-shrink-0">
-                                {i + 1}
-                              </span>
-                              <span className="text-amber-800">{tip}</span>
-                            </div>
-                          ))}
+                      {response.tips && response.tips.length > 0 && (
+                        <div className="bg-amber-50 rounded-xl p-6">
+                          <h3 className="text-lg font-semibold text-amber-900 mb-4 flex items-center">
+                            <Sparkles className="h-5 w-5 mr-2" />
+                            Essential Travel Tips
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {response.tips.slice(0, 6).map((tip, i) => (
+                              <div
+                                key={i}
+                                className="flex items-start space-x-3"
+                              >
+                                <span className="bg-amber-200 text-amber-800 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium flex-shrink-0">
+                                  {i + 1}
+                                </span>
+                                <span className="text-amber-800">{tip}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Day Highlights */}
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                          Trip Highlights
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {response.itinerary?.map((day, i) => (
-                            <div
-                              key={i}
-                              className="bg-gray-50 rounded-xl p-4 hover:bg-gray-100 transition-colors duration-200"
-                            >
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-                                  Day {day.day}
-                                </span>
-                                <MapPin className="h-4 w-4 text-gray-400" />
+                      {response.itinerary && response.itinerary.length > 0 && (
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-6">
+                            Trip Highlights
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {response.itinerary.map((day, i) => (
+                              <div
+                                key={i}
+                                className="bg-gray-50 rounded-xl p-4 hover:bg-gray-100 transition-colors duration-200"
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                    Day {day.day}
+                                  </span>
+                                  <MapPin className="h-4 w-4 text-gray-400" />
+                                </div>
+                                <h4 className="font-semibold text-gray-900">
+                                  {day.location}
+                                </h4>
+                                <p className="text-sm text-gray-600 mt-1">
+                                  {day.activities?.length || 0} activities
+                                  planned
+                                </p>
                               </div>
-                              <h4 className="font-semibold text-gray-900">
-                                {day.location}
-                              </h4>
-                              <p className="text-sm text-gray-600 mt-1">
-                                {day.activities?.length || 0} activities planned
-                              </p>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
 
@@ -525,51 +625,65 @@ const TravelAssistant = () => {
                       <h2 className="text-2xl font-bold text-gray-900">
                         Day-by-Day Itinerary
                       </h2>
-                      {response.itinerary?.map((day, i) => (
-                        <div
-                          key={i}
-                          className="border border-gray-200 rounded-xl overflow-hidden"
-                        >
-                          <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <h3 className="text-xl font-semibold">
-                                  Day {day.day}
-                                </h3>
-                                <p className="text-blue-100">{day.location}</p>
-                              </div>
-                              <Calendar className="h-6 w-6 text-blue-200" />
-                            </div>
-                          </div>
-                          <div className="p-6">
-                            <div className="space-y-4">
-                              {day.activities?.map((activity, j) => (
-                                <div
-                                  key={j}
-                                  className="flex items-start space-x-4 p-4 bg-gray-50 rounded-lg"
-                                >
-                                  <div className="flex items-center space-x-2">
-                                    <div className="bg-white p-2 rounded-full shadow-sm">
-                                      {getTimeIcon(activity.time)}
-                                    </div>
-                                    <div className="bg-white p-2 rounded-full shadow-sm">
-                                      {getActivityIcon(activity.description)}
-                                    </div>
-                                  </div>
-                                  <div className="flex-1">
-                                    <h4 className="font-semibold text-gray-900">
-                                      {activity.time}
-                                    </h4>
-                                    <p className="text-gray-700 mt-1">
-                                      {activity.description}
-                                    </p>
-                                  </div>
+                      {response.itinerary && response.itinerary.length > 0 ? (
+                        response.itinerary.map((day, i) => (
+                          <div
+                            key={i}
+                            className="border border-gray-200 rounded-xl overflow-hidden"
+                          >
+                            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <h3 className="text-xl font-semibold">
+                                    Day {day.day}
+                                  </h3>
+                                  <p className="text-blue-100">
+                                    {day.location}
+                                  </p>
                                 </div>
-                              ))}
+                                <Calendar className="h-6 w-6 text-blue-200" />
+                              </div>
+                            </div>
+                            <div className="p-6">
+                              <div className="space-y-4">
+                                {day.activities && day.activities.length > 0 ? (
+                                  day.activities.map((activity, j) => (
+                                    <div
+                                      key={j}
+                                      className="flex items-start space-x-4 p-4 bg-gray-50 rounded-lg"
+                                    >
+                                      <div className="flex items-center space-x-2">
+                                        <div className="bg-white p-2 rounded-full shadow-sm">
+                                          {getTimeIcon(activity.time)}
+                                        </div>
+                                        <div className="bg-white p-2 rounded-full shadow-sm">
+                                          {getActivityIcon(
+                                            activity.description
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex-1">
+                                        <h4 className="font-semibold text-gray-900">
+                                          {activity.time}
+                                        </h4>
+                                        <p className="text-gray-700 mt-1">
+                                          {activity.description}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-gray-500">
+                                    No activities planned for this day
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <p className="text-gray-500">No itinerary available</p>
+                      )}
                     </div>
                   )}
 
@@ -900,7 +1014,7 @@ const TravelAssistant = () => {
             </div>
             <div className="mt-8 md:mt-0 md:order-1">
               <p className="text-center text-base text-gray-500">
-                &copy; 2023 TravelMate AI. All rights reserved.
+                &copy; 2025 TravelMate AI. All rights reserved.
               </p>
             </div>
           </div>
